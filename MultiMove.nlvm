@@ -16,7 +16,7 @@ public class MultiMove extends Script implements BlockSystemController {
 	Here you define your Internal Blocks for the script
 	*/
 	
-	private Block station, wait1, wait2, launch, transferblock, mcb,
+	private Block station, wait2, lift, transferblock,
 	stg1, stg2;
 	private SpecialTrack transferTrack;
 	
@@ -40,10 +40,8 @@ public class MultiMove extends Script implements BlockSystemController {
 		*/
 		
 		station = setUpBlock("Station");
-		wait1 = setUpBlock("Wait1");
-		wait2 = setUpBlock("Wait2");
-		launch = setUpBlock("Launch");
-		mcb = setUpBlock("MCB");
+		lift = setUpBlock("Lift");
+		wait2 = setUpBlock("Block");
 		transferblock = setUpBlock("Transfer");
 		
 		stg1 = setUpBlock("STG1");
@@ -62,19 +60,14 @@ public class MultiMove extends Script implements BlockSystemController {
 	
 	public void onNextFrame (float tick) {
 
-			processRollingStation(station, transferblock, transferblock);
+			processRollingStation(station, lift, transferblock);
+			processTransfer(transferblock, station);
+			processStandardBrake(wait2, transferblock);
+			processNormalLift(lift, wait2);
 			
-			processTransfer(transferblock, launch);
-		
-			processStandardBrake(launch, mcb);
-			processTrimBrake(mcb, wait2, 25);
-			processStandardBrake(wait2, wait1);
-			processMultimoveBrake(wait1, station, false, false);
 			
-			processTransfer(transferblock, launch);
-			
-			processStorage(stg1, transferblock, null, transferTrack, 2);
-			processStorage(stg2, transferblock, null, transferTrack, 3);
+			processStorage(stg1, transferblock, null, transferTrack, 1);
+			processStorage(stg2, transferblock, null, transferTrack, 2);
 		
 		
 		counter += tick;
@@ -179,8 +172,8 @@ public class MultiMove extends Script implements BlockSystemController {
 		}
 		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR && transferTrack.getSwitchDirection() == 0);
 		b.setAdvanceBwdEnabled(b.getState() == WAITING && 
-			(stg1.getState() == CLEAR && transferTrack.getSwitchDirection() == 2) || 
-			(stg2.getState() == CLEAR && transferTrack.getSwitchDirection() == 3));
+			(stg1.getState() == CLEAR && transferTrack.getSwitchDirection() == 1) || 
+			(stg2.getState() == CLEAR && transferTrack.getSwitchDirection() == 2));
 	}
 	
 	/*
@@ -498,6 +491,45 @@ public class MultiMove extends Script implements BlockSystemController {
 		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR);
 	}
 	
+	private void processNormalLift (Block b, Block n) {
+		switch (b.getState()) {
+			case CLEAR:
+				b.getSection().setLiftFwdIdleOn();
+				break;
+			case APPROACHING:
+				b.getSection().setLiftFwdIdleOn();
+				if (b.getSection().isTrainOnSection()) {
+					b.setState(ENTERING);
+				}
+				break;
+			case ENTERING:
+				b.getSection().setLiftFwdOn();
+				
+				if (b.getSection().isTrainBehindLiftTrigger())
+					b.setState(WAITING);
+				break;
+			case WAITING:
+				if (n.getState() == CLEAR && mode == AUTO) 
+					b.setState(SET_LEAVE_F);
+				else
+					b.getSection().setLiftOff();
+				break;
+			case SET_LEAVE_F:
+				b.setState(LEAVING);
+				n.setState(APPROACHING);
+				break;
+			case LEAVING:
+				if (b.getSection().isTrainOnSection())
+					b.getSection().setLiftFwdOn();
+				else
+					b.getSection().setLiftFwdIdleOn();
+				if (b.getNumberOfTrainsOnBlock() == 0) 
+					b.setState(CLEAR);
+				break;
+		}
+		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR);
+	}
+	
 	private void processStorage (Block block, Block next, Block prev, SpecialTrack track, int direction) {
 		switch (block.getState()) {
 			case CLEAR:
@@ -645,7 +677,6 @@ public class MultiMove extends Script implements BlockSystemController {
 	private Block setUpBlock (String str, bool fwdVisible, bool bwdVisible, bool multipleTrains) {
 		Block b = coaster.getBlock(str);
 		if (b == null) return null;
-		System.throwRuntimeException("Invalid argument: coaster is null");
 		
 		registerBlockStates(b);
 		setInitialState(b);
