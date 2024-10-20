@@ -1,0 +1,707 @@
+import com.nolimitscoaster.*;
+import nlvm.util.*;
+import nlvm.math3d.*;
+
+public class MultiMove extends Script implements BlockSystemController {
+	
+	private static final int CLEAR = 0, APPROACHING = 1, ENTERING = 2, WAITING = 3, LEAVING = 4,
+	LEAVING_B = 5, APPROACHING_B = 6, ENTERING_B = 7, SET_LEAVE_F = 8, SET_LEAVE_B = 9,
+	STATION_WAITING = 10, ROLLING = 11, MANUAL_WAITING = 12,
+	AUTO = 1, MANUAL = 1, FULL_MANUAL = 2;
+	
+	private Coaster coaster;
+	
+	
+	/*
+	Here you define your Internal Blocks for the script
+	*/
+	
+	private Block station, wait1, wait2, launch, transferblock, mcb,
+	stg1, stg2;
+	private SpecialTrack transferTrack;
+	
+	private int mode = AUTO;
+	private float counter;
+	
+		private float gateRot = 0;
+	
+	
+	/*
+	Setup
+	*/
+	
+	
+	public bool onInit () {
+		coaster = sim.getCoasterForEntityId(getParentEntityId());
+		blockVector = new Vector();
+		
+		/*
+		Define your blocks here
+		*/
+		
+		station = setUpBlock("Station");
+		wait1 = setUpBlock("Wait1");
+		wait2 = setUpBlock("Wait2");
+		launch = setUpBlock("Launch");
+		mcb = setUpBlock("MCB");
+		transferblock = setUpBlock("Transfer");
+		
+		stg1 = setUpBlock("STG1");
+		stg2 = setUpBlock("STG2");
+		
+		transferTrack = coaster.getSpecialTrack("Transfer");
+		
+		
+		
+		coaster.setBlockSystemController(this);
+		return true;
+	}
+	
+	private bool manualDispatch = false;
+	private float manualToggleCtr = 0;
+	
+	public void onNextFrame (float tick) {
+
+			processRollingStation(station, transferblock, transferblock);
+			
+			processTransfer(transferblock, launch);
+		
+			processStandardBrake(launch, mcb);
+			processTrimBrake(mcb, wait2, 25);
+			processStandardBrake(wait2, wait1);
+			processMultimoveBrake(wait1, station, false, false);
+			
+			processTransfer(transferblock, launch);
+			
+			processStorage(stg1, transferblock, null, transferTrack, 2);
+			processStorage(stg2, transferblock, null, transferTrack, 3);
+		
+		
+		counter += tick;
+	}
+	
+	/*
+	--------------------------------------------------------------------------------------------------------------------
+	*/
+	
+	
+	private void processTransfer (Block b, Block n) {
+		switch (b.getState()) {
+			case CLEAR:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				break;
+			case APPROACHING:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				if (b.getSection().isTrainOnSection())
+					b.setState(ENTERING);
+				break;
+			case APPROACHING_B:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				if (b.getSection().isTrainOnSection())
+					b.setState(ENTERING_B);
+				break;
+			case ENTERING:
+				if (b.getSection().isTrainBehindBrakeTrigger())
+					b.setState(WAITING);
+				else {	
+					b.getSection().setTransportsStandardFwdOn();
+					b.getSection().setBrakesOff();
+				}	
+				break;
+			case ENTERING_B:
+				b.getSection().setTransportsStandardBwdOn();
+				b.getSection().setBrakesOff();
+				if (b.getSection().isTrainBeforeBrakeTrigger())
+					b.setState(WAITING);
+				break;
+			case WAITING:
+					b.getSection().setTransportsOff();
+					b.getSection().setBrakesOn();
+				if ((n.getState() == CLEAR || n.getSection().isTrainBehindEndOfSection(0)) && transferTrack.getSwitchDirection() == 0) {
+					b.setState(SET_LEAVE_F);
+				} else if (b.getSection().isTrainBehindBrakeTrigger()) {
+					b.getSection().setBrakesOn();
+					b.getSection().setTransportsOff();
+				} else {
+					b.getSection().setBrakesOff();
+					b.getSection().setTransportsStandardFwdOn();
+				}
+				if ((n.getState() == APPROACHING || n.getSection().isTrainBehindEndOfSection(0)) && transferTrack.getSwitchDirection() == 0) {
+					b.setState(SET_LEAVE_F);
+				} else if (b.getSection().isTrainBehindBrakeTrigger()) {
+					b.getSection().setBrakesOn();
+					b.getSection().setTransportsOff();
+				} else {
+					b.getSection().setBrakesOff();
+					b.getSection().setTransportsStandardFwdOn();
+				}
+				break;
+			case SET_LEAVE_F:
+				b.setState(LEAVING);
+				n.setState(APPROACHING);
+				b.getSection().setTransportsStandardFwdOn();
+					b.getSection().setBrakesOff();
+				
+				break;
+			case LEAVING:
+			if (b.getNumberOfTrainsOnBlock() == 2) {
+					b.setState(ENTERING);
+				}
+				if (b.getSection().isTrainOnSection()) {
+					b.getSection().setTransportsStandardFwdOn();
+					b.getSection().setBrakesOff();
+				} else
+					b.getSection().setTransportsOff();
+				b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0)
+					b.setState(CLEAR);
+				
+				break;
+			case SET_LEAVE_B:
+				b.setState(LEAVING_B);
+				if (transferTrack.getSwitchDirection() == 1)
+					stg1.setState(APPROACHING_B);
+				else if (transferTrack.getSwitchDirection() == 2)
+					stg2.setState(APPROACHING_B);
+				break;
+			case LEAVING_B:
+				if (b.getSection().isTrainOnSection())
+					b.getSection().setTransportsLaunchBwdOn();
+				else
+					b.getSection().setTransportsOff();
+				b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0)
+					b.setState(CLEAR);
+				break;
+		}
+		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR && transferTrack.getSwitchDirection() == 0);
+		b.setAdvanceBwdEnabled(b.getState() == WAITING && 
+			(stg1.getState() == CLEAR && transferTrack.getSwitchDirection() == 2) || 
+			(stg2.getState() == CLEAR && transferTrack.getSwitchDirection() == 3));
+	}
+	
+	/*
+	--------------------------------------------------------------------------------------------------------------------
+	*/
+
+	private void processRollingStation (Block b, Block n, Block t) {
+		switch (b.getState()) {
+			case CLEAR:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				break;
+			case APPROACHING:
+				b.getSection().setTransportsStandardFwdOn();
+				b.getSection().setBrakesOff();
+				if (b.getSection().isTrainOnSection() && b.getNumberOfTrainsOnBlock() == 1 && b.getSection().isTrainBeforeStartOfSection(0)) {
+					b.setState(ENTERING);
+				}
+				n.getSection().setTransportsLaunchFwdOn();
+				break;
+			case ENTERING:
+				b.getSection().setStationEntering();
+				if (getSpeedOfTrain(b) == 0) {
+					gateRot -= sim.getCurSimulationTickSec() / 5;
+					if (gateRot <= 0) {
+						gateRot = 0;
+						b.setState(WAITING);
+						}
+				}
+				break;
+			case WAITING:
+				if (n.getState() == CLEAR)
+					b.getSection().setStationNextBlockClear();
+				
+				if (b.getSection().isStationWaitingForAdvance()) {
+					b.setState(STATION_WAITING);
+					b.getSection().setStationLeaving();
+				}
+				break;
+			case STATION_WAITING:
+			b.setState(SET_LEAVE_F);
+				break;
+			case SET_LEAVE_F:
+				b.getSection().setStationLeaving();
+					b.setState(LEAVING);
+					n.setState(APPROACHING);
+					n.getSection().setTransportsLaunchFwdOn();
+				break;
+			case LEAVING:
+					b.getSection().setBrakesOff();
+					b.getSection().setTransportsStandardFwdOn();
+					b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0) {
+					b.setState(CLEAR);
+				}
+				break;
+			case SET_LEAVE_B:
+				b.getSection().setStationLeaving();
+				b.setState(LEAVING_B);
+				transferblock.setState(APPROACHING_B);
+				break;
+			case LEAVING_B:
+				b.getSection().setTransportsLaunchBwdOn();
+				b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0) {
+					b.setState(CLEAR);
+				}
+				break;
+			case ROLLING:
+					b.getSection().setTransportsLaunchFwdOn();
+					b.getSection().setBrakesTrim();
+				b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0)
+					b.setState(APPROACHING);
+				else if (b.getSection().isTrainBeforeStartOfSection(0)) {
+					b.setState(APPROACHING);
+				}
+				break;
+		}
+		b.setAdvanceFwdEnabled(b.getState() == STATION_WAITING);
+		b.setAdvanceBwdEnabled(b.getState() == STATION_WAITING && transferblock.getState() == CLEAR && transferTrack.getSwitchDirection() == 0);
+		
+	}
+	
+	
+	private Vector3f pos, park;
+	
+	private void processMultimoveBrake (Block b, Block n, bool launch, bool condition) {
+		switch (b.getState()) {
+			case CLEAR:
+				if (n.getState() == CLEAR) {
+					b.getSection().setTransportsLaunchFwdOn();
+					b.getSection().setTransportsStandardFwdOn();
+				b.getSection().setBrakesOn();
+				} else
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				break;
+			case APPROACHING:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				if (b.getSection().isTrainOnSection())
+					b.setState(ENTERING);
+				break;
+			case ENTERING:
+				if (b.getSection().isTrainBehindBrakeTrigger())
+					b.setState(WAITING);
+				else {	
+					b.getSection().setTransportsStandardFwdOn();
+					b.getSection().setBrakesOff();
+				}	
+				break;
+			case WAITING:
+					b.getSection().setTransportsOff();
+					b.getSection().setBrakesOn();
+				if ((n.getState() == CLEAR || n.getSection().isTrainBehindEndOfSection(0))) {
+					b.setState(SET_LEAVE_F);
+				} else if (b.getSection().isTrainBehindBrakeTrigger()) {
+					b.getSection().setBrakesOn();
+					b.getSection().setTransportsOff();
+				} else {
+					b.getSection().setBrakesOff();
+					b.getSection().setTransportsStandardFwdOn();
+				}
+				if ((n.getState() == APPROACHING || n.getSection().isTrainBehindEndOfSection(0))) {
+					b.setState(SET_LEAVE_F);
+				} else if (b.getSection().isTrainBehindBrakeTrigger()) {
+					b.getSection().setBrakesOn();
+					b.getSection().setTransportsOff();
+				} else {
+					b.getSection().setBrakesOff();
+					b.getSection().setTransportsStandardFwdOn();
+				}
+				break;
+			case SET_LEAVE_F:
+				b.setState(LEAVING);
+				n.setState(APPROACHING);
+				b.getSection().setTransportsStandardFwdOn();
+					b.getSection().setBrakesOff();
+				
+				break;
+			case LEAVING:
+			if (b.getNumberOfTrainsOnBlock() == 2) {
+					b.setState(ENTERING);
+				}
+				if (b.getSection().isTrainOnSection()) {
+					b.getSection().setTransportsStandardFwdOn();
+					b.getSection().setBrakesOff();
+				} else
+					b.getSection().setTransportsOff();
+				b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0)
+					b.setState(CLEAR);
+				
+				break;
+		}
+		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR);
+	}
+	
+	private void processStandardBrake (Block b, Block n) {
+		switch (b.getState()) {
+			case CLEAR:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				break;
+			case APPROACHING:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				if (b.getSection().isTrainOnSection())
+					b.setState(ENTERING);
+				break;
+			case ENTERING:
+				if (b.getSection().isTrainBehindBrakeTrigger())
+					b.setState(WAITING);
+				else {	
+					b.getSection().setTransportsStandardFwdOn();
+					b.getSection().setBrakesOff();
+				}
+				break;
+			case WAITING:
+				b.getSection().setTransportsOff();
+				if (n.getState() == CLEAR && mode == AUTO) {
+					b.setState(SET_LEAVE_F);
+				} else {
+					b.getSection().setBrakesOn();
+				}
+				break;
+			case SET_LEAVE_F:
+				b.setState(LEAVING);
+				n.setState(APPROACHING);
+				break;
+			case LEAVING:
+				if (b.getSection().isTrainOnSection())
+					b.getSection().setTransportsStandardFwdOn();
+				else
+					b.getSection().setTransportsOff();
+				b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0)
+					b.setState(CLEAR);
+				break;
+		}
+		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR);
+		}
+		
+	private void processTrimBrake (Block b, Block n, float speed) {
+		switch (b.getState()) {
+			case CLEAR:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				break;
+			case APPROACHING:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				if (b.getSection().isTrainOnSection())
+					b.setState(ENTERING);
+				break;
+			case ENTERING:
+				if (b.getSection().isTrainBehindBrakeTrigger())
+					b.setState(WAITING);
+				else {	
+				Section s = b.getSection();
+					b.getSection().setTransportsStandardFwdOn();
+					if (s.isTrainOnSection()) {
+					if (s.getTrainOnSection().getSpeed() > (speed / 3.6)) {
+						s.setBrakesOn();
+						} else {
+							s.setBrakesOff();
+							} 
+						
+					} else {
+						s.setBrakesOn();
+						}
+				}
+				break;
+			case WAITING:
+				b.getSection().setTransportsOff();
+				if (n.getState() == CLEAR && mode == AUTO) {
+					b.setState(SET_LEAVE_F);
+				} else {
+					b.getSection().setBrakesOn();
+				}
+				break;
+			case SET_LEAVE_F:
+				b.setState(LEAVING);
+				n.setState(APPROACHING);
+				break;
+			case LEAVING:
+				if (b.getSection().isTrainOnSection()) {
+					Section s = b.getSection();
+					b.getSection().setTransportsStandardFwdOn();
+					if (s.isTrainOnSection()) {
+					if (s.getTrainOnSection().getSpeed() > (speed / 3.6)) {
+						s.setBrakesOn();
+						} else {
+							s.setBrakesOff();
+							} 
+						
+					} else {
+						s.setBrakesOn();
+						}
+				 } else {
+					b.getSection().setTransportsOff();
+				b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0)
+					b.setState(CLEAR);
+				break;
+		}
+		}
+		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR);
+		}
+	private void processStandardBrake (Block b, Block n, bool launch) {
+		switch (b.getState()) {
+			case CLEAR:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				break;
+			case APPROACHING:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				if (b.getSection().isTrainOnSection())
+					b.setState(ENTERING);
+				break;
+			case ENTERING:
+				if (b.getSection().isTrainBehindBrakeTrigger())
+					b.setState(WAITING);
+				else {	
+					b.getSection().setTransportsStandardFwdOn();
+					b.getSection().setBrakesOff();
+				}
+				break;
+			case WAITING:
+				b.getSection().setTransportsOff();
+				if (n.getState() == CLEAR && mode == AUTO) {
+					b.setState(SET_LEAVE_F);
+				} else {
+					b.getSection().setBrakesOn();
+				}
+				break;
+			case SET_LEAVE_F:
+				b.setState(LEAVING);
+				n.setState(APPROACHING);
+				break;
+			case LEAVING:
+				if (b.getSection().isTrainOnSection() && launch)
+					b.getSection().setTransportsLaunchFwdOn();
+				else if (b.getSection().isTrainOnSection())
+					b.getSection().setTransportsStandardFwdOn();
+				else
+					b.getSection().setTransportsOff();
+				b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0)
+					b.setState(CLEAR);
+				break;
+		}
+		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR);
+	}
+	
+	private void processStorage (Block block, Block next, Block prev, SpecialTrack track, int direction) {
+		switch (block.getState()) {
+			case CLEAR:
+				block.getSection().setTransportsOff();
+				break;
+			case APPROACHING:
+				block.getSection().setTransportsStandardFwdOn();
+				if (block.getSection().isTrainOnSection())
+					block.setState(ENTERING);
+				break;
+			case ENTERING:
+				block.getSection().setTransportsStandardFwdOn();
+				if (block.getSection().isTrainBehindCenterOfSection())
+					block.setState(WAITING);
+				break;
+			case APPROACHING_B:
+				block.getSection().setTransportsStandardBwdOn();
+				if (block.getSection().isTrainOnSection())
+					block.setState(ENTERING_B);
+				break;
+			case ENTERING_B:
+				block.getSection().setTransportsStandardBwdOn();
+				if (block.getSection().isTrainBeforeCenterOfSection())
+					block.setState(WAITING);
+				break;
+			case WAITING:
+				block.getSection().setTransportsOff();
+				block.getSection().getTrainOnSection().setLashedToTrack(true);
+				break;
+			case SET_LEAVE_F:
+				block.getSection().getTrainOnSection().setLashedToTrack(false);
+				block.setState(LEAVING);
+				next.setState(APPROACHING);
+				break;
+			case SET_LEAVE_B:
+				block.getSection().getTrainOnSection().setLashedToTrack(false);
+				block.setState(LEAVING_B);
+				prev.setState(APPROACHING_B);
+				break;
+			case LEAVING:
+				block.getSection().setTransportsStandardFwdOn();
+				if (block.getNumberOfTrainsOnBlock() == 0) block.setState(CLEAR);
+				break;
+			case LEAVING_B:
+				block.getSection().setTransportsStandardBwdOn();
+				if (block.getNumberOfTrainsOnBlock() == 0) block.setState(CLEAR);
+				break;
+		}
+		block.setAdvanceFwdEnabled(block.getState() == WAITING && next != null && next.getState() == CLEAR && (track == null || track.getSwitchDirection() == direction));
+		block.setAdvanceBwdEnabled(block.getState() == WAITING && prev != null && prev.getState() == CLEAR && (track == null || track.getSwitchDirection() == direction));
+	}
+	private void processStorage (Block block, Block next, Block prev) {
+		processStorage(block, next, prev, null, 0);
+	}
+	
+	private void processTrimZeroHysteresis (Section s, float speed) {
+		if (s.isTrainOnSection()) {
+			if (s.getTrainOnSection().getSpeed() > (speed / 3.6))
+				s.setBrakesOn();
+			else
+				s.setBrakesOff();
+		} else {
+			s.setBrakesOn();
+		}
+	}
+	private void processTrimWithHysteresis (Section s, float on, float off) {
+		if (s.isTrainOnSection()) {
+			if (s.getTrainOnSection().getSpeed() > (on / 3.6))
+				s.setBrakesOn();
+			else if (s.getTrainOnSection().getSpeed() <= (off / 3.6))
+				s.setBrakesOff();
+		} else {
+			s.setBrakesOn();
+		}
+	}
+	
+	private float trimPercent;
+	private void processMagTrim (Section s, float high, float low) {
+		if (s.isTrainOnSection()) {
+			trimPercent = ((getSpeedOfTrain(s) *  3.6f) - low) / (high - low);
+			if (counter % (1.0/5) < trimPercent/5) 
+				s.setBrakesTrim();
+			else
+				s.setBrakesOff();
+		} else {
+			s.setBrakesOn();
+		}
+	}
+	
+	/*
+	Tool methods
+	*/
+	
+	private float calcAccel (Block b, float distance) {
+		return (float) (Math.pow(getSpeedOfTrain(b), 2) / (2 * distance)) / 9.8f;
+	}
+	private float calcAccel (Block b, Vector3f pos, Vector3f goal) {
+		return calcAccel(b, pos.distance(goal));
+	}
+	
+	private float getSpeedOfTrain (Block b) {
+		return getSpeedOfTrain(b.getSection());
+	}
+	private float getSpeedOfTrain (Section s) {
+		return getSpeedOfTrain(s.getTrainOnSection());
+	}
+	private float getSpeedOfTrain (Train t) {
+		if (t == null) return -1;
+		return (float) t.getSpeed();
+	}
+	
+	private float percentThrough (Block b) {
+		return percentThrough(b.getSection());
+	}
+	private float percentThrough (Section s) {
+		if (!s.isTrainOnSection())
+			return -1;
+		return distOn(s, true) / (distOn(s, true) + distOn(s, false));
+	}
+	private float distOn (Block b, bool fromStart) {
+		return distOn(b.getSection(), fromStart);
+	}
+	private float distOn (Section s, bool fromStart) {
+		float dist = -1;
+		
+		if (!s.isTrainOnSection())
+			return dist;
+		
+		if (fromStart)
+			while(!s.isTrainBeforeStartOfSection(dist))
+				dist += 0.01f;
+		else
+			while (!s.isTrainBehindEndOfSection(dist))
+				dist += 0.01f;
+		
+		return (float) Math.max(0, dist);
+	}
+
+	
+	/*
+	BlockSystemController Methods
+	*/
+	
+	private Vector blockVector;
+	private Block setUpBlock (String str, bool fwdVisible, bool bwdVisible, bool multipleTrains) {
+		Block b = coaster.getBlock(str);
+		if (b == null) return null;
+		
+		registerBlockStates(b);
+		setInitialState(b);
+		
+		b.setAdvanceFwdVisible(fwdVisible);
+		b.setAdvanceBwdVisible(bwdVisible);
+		
+		b.setEnableMultipleTrainsOnBlockWarning(multipleTrains);
+		
+		blockVector.addElement(b);
+		
+		return b;
+	}
+	private Block setUpBlock (String str) {
+		return setUpBlock(str, true, true, false);
+	}
+	
+	private void registerBlockStates (Block b) {
+		b.registerState(CLEAR, "Clear", Block.LAMP_OFF);
+		b.registerState(APPROACHING, "Approaching", Block.LAMP_ON);
+		b.registerState(ENTERING, "Entering", Block.LAMP_ON);
+		b.registerState(WAITING, "Waiting", Block.LAMP_ON);
+		b.registerState(LEAVING, "Leaving Forwards", Block.LAMP_FLASHING);
+		b.registerState(LEAVING_B, "Leaving Backwards", Block.LAMP_FLASHING);
+		b.registerState(APPROACHING_B, "Approaching Backwards", Block.LAMP_FLASHING);
+		b.registerState(ENTERING_B, "Entering Backwards", Block.LAMP_FLASHING);
+		b.registerState(SET_LEAVE_F, "Leaving Forwards", Block.LAMP_FLASHING);
+		b.registerState(SET_LEAVE_B, "Leaving Backwards", Block.LAMP_FLASHING);
+		b.registerState(STATION_WAITING, "Station Waiting", Block.LAMP_ON);
+		b.registerState(ROLLING, "Rolling Block", Block.LAMP_FLASHING);
+		b.registerState(MANUAL_WAITING, "Waiting for manual", Block.LAMP_FLASHING);
+	}
+	private void setAllInitialStates () {
+		for (int i = 0; i < blockVector.size(); i++) 
+			setInitialState((Block) (blockVector.elementAt(i)));
+	}
+	private void setInitialState (Block b) {
+		if (b.getNumberOfTrainsOnBlock () != 0) b.setState(WAITING);
+		else b.setState(CLEAR);
+	}
+	
+	public void onAdvanceFWDButton(Block block) {
+		block.setState(SET_LEAVE_F);
+	}
+	public void onAdvanceBWDButton(Block block) {
+		block.setState(SET_LEAVE_B);
+	}
+	
+	public void onAutoMode(Coaster coaster) {
+		if (mode == FULL_MANUAL) setAllInitialStates();
+		mode = AUTO;
+	}
+	public void onFullManualMode(Coaster coaster) {
+		mode = FULL_MANUAL;
+	}
+	public void onManualBlockMode(Coaster coaster) {
+		if (mode == FULL_MANUAL) setAllInitialStates();
+		mode = MANUAL;
+	}
+}
