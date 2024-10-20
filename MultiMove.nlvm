@@ -645,6 +645,7 @@ public class MultiMove extends Script implements BlockSystemController {
 	private Block setUpBlock (String str, bool fwdVisible, bool bwdVisible, bool multipleTrains) {
 		Block b = coaster.getBlock(str);
 		if (b == null) return null;
+		System.throwRuntimeException("Invalid argument: coaster is null");
 		
 		registerBlockStates(b);
 		setInitialState(b);
