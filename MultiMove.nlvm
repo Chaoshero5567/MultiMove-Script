@@ -11,13 +11,8 @@ public class MultiMove extends Script implements BlockSystemController {
 	
 	private Coaster coaster;
 	
-	
-	/*
-	Here you define your Internal Blocks for the script
-	*/
-	
-	private Block station, wait2, lift, transferblock,
-	stg1, stg2;
+	private Block station, wait2, wait3, main1, main2, transferblock,
+	stg1, stg2, stg3;
 	private SpecialTrack transferTrack;
 	
 	private int mode = AUTO;
@@ -30,22 +25,20 @@ public class MultiMove extends Script implements BlockSystemController {
 	Setup
 	*/
 	
-	
 	public bool onInit () {
 		coaster = sim.getCoasterForEntityId(getParentEntityId());
 		blockVector = new Vector();
 		
-		/*
-		Define your blocks here
-		*/
-		
 		station = setUpBlock("Station");
-		lift = setUpBlock("Lift");
-		wait2 = setUpBlock("Block");
-		transferblock = setUpBlock("Transfer");
+		main1 = setUpBlock("Launch1");
+		main2 = setUpBlock("Launch2");
+		transferblock = setUpBlock("Wait1");
+		wait2 = setUpBlock("Wait2");
+		wait3 = setUpBlock("Wait3");
 		
 		stg1 = setUpBlock("STG1");
 		stg2 = setUpBlock("STG2");
+		stg3 = setUpBlock("STG3");
 		
 		transferTrack = coaster.getSpecialTrack("Transfer");
 		
@@ -60,14 +53,20 @@ public class MultiMove extends Script implements BlockSystemController {
 	
 	public void onNextFrame (float tick) {
 
-			processRollingStation(station, lift, transferblock);
+			processNormalStation(station, main1, main2);
+			
+			processStandardBrake(main1, main2, true);
+			processStandardBrake(main2, wait3, true);
+			
+			processMultimoveBrake(wait3, wait2, true, true);
+			processMultimoveBrake(wait2, transferblock, true, true);
+			
 			processTransfer(transferblock, station);
-			processStandardBrake(wait2, transferblock);
-			processNormalLift(lift, wait2);
 			
-			
-			processStorage(stg1, transferblock, null, transferTrack, 1);
-			processStorage(stg2, transferblock, null, transferTrack, 2);
+			processStorage(stg1, transferblock, null, transferTrack, 2);
+			processStorage(stg2, transferblock, null, transferTrack, 3);
+			processStorage(stg2, transferblock, null, transferTrack, 4);
+
 		
 		
 		counter += tick;
@@ -78,7 +77,7 @@ public class MultiMove extends Script implements BlockSystemController {
 	*/
 	
 	
-	private void processTransfer (Block b, Block n) {
+		private void processTransfer (Block b, Block n) {
 		switch (b.getState()) {
 			case CLEAR:
 				b.getSection().setTransportsOff();
@@ -97,9 +96,9 @@ public class MultiMove extends Script implements BlockSystemController {
 					b.setState(ENTERING_B);
 				break;
 			case ENTERING:
-				if (b.getSection().isTrainBehindBrakeTrigger())
+				if (b.getSection().isTrainBehindBrakeTrigger() && b.getNumberOfTrainsOnBlock() == 1) {
 					b.setState(WAITING);
-				else {	
+				} else {	
 					b.getSection().setTransportsStandardFwdOn();
 					b.getSection().setBrakesOff();
 				}	
@@ -155,9 +154,11 @@ public class MultiMove extends Script implements BlockSystemController {
 				break;
 			case SET_LEAVE_B:
 				b.setState(LEAVING_B);
-				if (transferTrack.getSwitchDirection() == 1)
+				if (transferTrack.getSwitchDirection() == 2)
 					stg1.setState(APPROACHING_B);
-				else if (transferTrack.getSwitchDirection() == 2)
+				else if (transferTrack.getSwitchDirection() == 3)
+					stg2.setState(APPROACHING_B);
+					else if (transferTrack.getSwitchDirection() == 4)
 					stg2.setState(APPROACHING_B);
 				break;
 			case LEAVING_B:
@@ -172,15 +173,16 @@ public class MultiMove extends Script implements BlockSystemController {
 		}
 		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR && transferTrack.getSwitchDirection() == 0);
 		b.setAdvanceBwdEnabled(b.getState() == WAITING && 
-			(stg1.getState() == CLEAR && transferTrack.getSwitchDirection() == 1) || 
-			(stg2.getState() == CLEAR && transferTrack.getSwitchDirection() == 2));
+			(stg1.getState() == CLEAR && transferTrack.getSwitchDirection() == 2) || 
+			(stg2.getState() == CLEAR && transferTrack.getSwitchDirection() == 3) || 
+			(stg3.getState() == CLEAR && transferTrack.getSwitchDirection() == 4));
 	}
 	
 	/*
 	--------------------------------------------------------------------------------------------------------------------
 	*/
 
-	private void processRollingStation (Block b, Block n, Block t) {
+	private void processNormalStation (Block b, Block n, Block t) {
 		switch (b.getState()) {
 			case CLEAR:
 				b.getSection().setTransportsOff();
@@ -189,7 +191,7 @@ public class MultiMove extends Script implements BlockSystemController {
 			case APPROACHING:
 				b.getSection().setTransportsStandardFwdOn();
 				b.getSection().setBrakesOff();
-				if (b.getSection().isTrainOnSection() && b.getNumberOfTrainsOnBlock() == 1 && b.getSection().isTrainBeforeStartOfSection(0)) {
+				if ((b.getSection().isTrainOnSection()) && (b.getNumberOfTrainsOnBlock() == 1) && (b.getSection().isTrainBeforeStartOfSection(0))) {
 					b.setState(ENTERING);
 				}
 				n.getSection().setTransportsLaunchFwdOn();
@@ -258,33 +260,119 @@ public class MultiMove extends Script implements BlockSystemController {
 		
 	}
 	
-	
 	private Vector3f pos, park;
-	
-	private void processMultimoveBrake (Block b, Block n, bool launch, bool condition) {
+	private void processSmartStation (Block b, Block n, float decel, float hysteresis, Block t) {
 		switch (b.getState()) {
 			case CLEAR:
-				if (n.getState() == CLEAR) {
-					b.getSection().setTransportsLaunchFwdOn();
-					b.getSection().setTransportsStandardFwdOn();
-				b.getSection().setBrakesOn();
-				} else
 				b.getSection().setTransportsOff();
 				b.getSection().setBrakesOn();
 				break;
 			case APPROACHING:
+				b.getSection().setTransportsStandardFwdOn();
+				b.getSection().setBrakesOff();
+				if (b.getSection().isTrainOnSection() && b.getNumberOfTrainsOnBlock() == 1 && b.getSection().isTrainBeforeStartOfSection(0)) {
+					b.setState(ENTERING);
+				}
+				break;
+			case ENTERING:
+				b.getSection().getTrainOnSection().getCarOrientationAndPosition(0, null, null, null, pos);
+				
+				if (calcAccel(b, pos, park) > decel / Math.max(1, sim.getCurSimulationSpeed())) {
+					b.getSection().setBrakesOn();
+					b.getSection().setTransportsOff();
+				} else if (calcAccel(b, pos, park) < decel - hysteresis) {
+					b.getSection().setBrakesOff();
+					b.getSection().setTransportsStandardFwdOn();
+				}
+				if (pos.distance(park) < 0.1) {
+					b.getSection().setStationEntering();
+					b.setState(WAITING);
+				}
+				break;
+			case WAITING:
+				if (n.getState() == CLEAR)
+					b.getSection().setStationNextBlockClear();
+				else 
+					b.getSection().setStationNextBlockOccupied();
+				if (n.getState() == LEAVING && n.getSection().isTrainBehindEndOfSection(0))
+					b.getSection().setStationNextBlockClear();
+				if (b.getSection().isStationWaitingForAdvance()) {
+					b.setState(STATION_WAITING);
+					b.getSection().setStationLeaving();
+				}
+				break;
+			case STATION_WAITING:
+				if (mode == AUTO) b.setState(SET_LEAVE_F);
+				break;
+			case SET_LEAVE_F:
+				b.getSection().setStationLeaving();
+				b.setState(LEAVING);
+				n.setState(APPROACHING);
+				break;
+			case LEAVING:
+				b.getSection().setTransportsStandardFwdOn();
+				b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0) {
+					b.setState(CLEAR);
+				}
+				break;
+			case ROLLING:
+				if (b.getSection().isTrainOnSection())
+					b.getSection().setTransportsStandardFwdOn();
+				else
+					b.getSection().setBrakesOff();
+				b.getSection().setBrakesTrim();
+				if (b.getNumberOfTrainsOnBlock() == 0)
+					b.setState(APPROACHING);
+				else if (b.getSection().isTrainBeforeStartOfSection(0)) {
+					b.setState(APPROACHING);
+				}
+				break;
+		}
+		b.setAdvanceFwdEnabled(b.getState() == STATION_WAITING);
+		
+		if (counter == 0) {
+			pos = new Vector3f();
+			park = new Vector3f();
+			
+			b.getSection().getTrainOnSection().getCarOrientationAndPosition(0, null, null, null, park);
+		}
+	}
+
+	
+	private void processMultimoveBrake (Block b, Block n, bool launch, bool condition) {
+			switch (b.getState()) {
+			case CLEAR:
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				break;
+			case APPROACHING:
+				if (n.getState()== WAITING) {
+				b.getSection().setTransportsOff();
+				b.getSection().setBrakesOn();
+				}
+				if (b.getSection().isTrainOnSection() && b.getNumberOfTrainsOnBlock() == 1)
+					b.setState(ENTERING);
+				break;
+			case APPROACHING_B:
 				b.getSection().setTransportsOff();
 				b.getSection().setBrakesOn();
 				if (b.getSection().isTrainOnSection())
-					b.setState(ENTERING);
+					b.setState(ENTERING_B);
 				break;
 			case ENTERING:
-				if (b.getSection().isTrainBehindBrakeTrigger())
+				if ((b.getSection().isTrainBehindBrakeTrigger()) && (b.getNumberOfTrainsOnBlock() == 1))
 					b.setState(WAITING);
 				else {	
 					b.getSection().setTransportsStandardFwdOn();
 					b.getSection().setBrakesOff();
 				}	
+				break;
+			case ENTERING_B:
+				b.getSection().setTransportsStandardBwdOn();
+				b.getSection().setBrakesOff();
+				if (b.getSection().isTrainBeforeBrakeTrigger())
+					b.setState(WAITING);
 				break;
 			case WAITING:
 					b.getSection().setTransportsOff();
@@ -298,7 +386,7 @@ public class MultiMove extends Script implements BlockSystemController {
 					b.getSection().setBrakesOff();
 					b.getSection().setTransportsStandardFwdOn();
 				}
-				if ((n.getState() == APPROACHING || n.getSection().isTrainBehindEndOfSection(0))) {
+				if ((n.getState() == APPROACHING && n.getSection().isTrainBehindEndOfSection(0))) {
 					b.setState(SET_LEAVE_F);
 				} else if (b.getSection().isTrainBehindBrakeTrigger()) {
 					b.getSection().setBrakesOn();
@@ -310,7 +398,9 @@ public class MultiMove extends Script implements BlockSystemController {
 				break;
 			case SET_LEAVE_F:
 				b.setState(LEAVING);
-				n.setState(APPROACHING);
+				if (!(n.getState() == LEAVING)) {
+				 n.setState(APPROACHING);
+				}
 				b.getSection().setTransportsStandardFwdOn();
 					b.getSection().setBrakesOff();
 				
@@ -327,11 +417,11 @@ public class MultiMove extends Script implements BlockSystemController {
 				b.getSection().setBrakesTrim();
 				if (b.getNumberOfTrainsOnBlock() == 0)
 					b.setState(CLEAR);
-				
 				break;
 		}
 		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR);
 	}
+	
 	
 	private void processStandardBrake (Block b, Block n) {
 		switch (b.getState()) {
@@ -491,44 +581,6 @@ public class MultiMove extends Script implements BlockSystemController {
 		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR);
 	}
 	
-	private void processNormalLift (Block b, Block n) {
-		switch (b.getState()) {
-			case CLEAR:
-				b.getSection().setLiftFwdIdleOn();
-				break;
-			case APPROACHING:
-				b.getSection().setLiftFwdIdleOn();
-				if (b.getSection().isTrainOnSection()) {
-					b.setState(ENTERING);
-				}
-				break;
-			case ENTERING:
-				b.getSection().setLiftFwdOn();
-				
-				if (b.getSection().isTrainBehindLiftTrigger())
-					b.setState(WAITING);
-				break;
-			case WAITING:
-				if (n.getState() == CLEAR && mode == AUTO) 
-					b.setState(SET_LEAVE_F);
-				else
-					b.getSection().setLiftOff();
-				break;
-			case SET_LEAVE_F:
-				b.setState(LEAVING);
-				n.setState(APPROACHING);
-				break;
-			case LEAVING:
-				if (b.getSection().isTrainOnSection())
-					b.getSection().setLiftFwdOn();
-				else
-					b.getSection().setLiftFwdIdleOn();
-				if (b.getNumberOfTrainsOnBlock() == 0) 
-					b.setState(CLEAR);
-				break;
-		}
-		b.setAdvanceFwdEnabled(b.getState() == WAITING && n.getState() == CLEAR);
-	}
 	
 	private void processStorage (Block block, Block next, Block prev, SpecialTrack track, int direction) {
 		switch (block.getState()) {
